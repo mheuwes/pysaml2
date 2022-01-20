@@ -8,7 +8,11 @@ import logging
 import re
 from xml.etree import ElementTree as ElementTree
 
-import defusedxml.ElementTree
+try:
+    import defusedxml.lxml as defused_etree
+except:
+    import defusedxml.ElementTree as defused_etree
+
 
 from saml2 import create_class_from_element_tree
 from saml2.samlp import NAMESPACE as SAMLP_NAMESPACE
@@ -116,15 +120,17 @@ def parse_soap_enveloped_saml_authn_response(text):
 #    return parse_soap_enveloped_saml_thingy(text, [expected_tag])
 
 
-def parse_soap_enveloped_saml_thingy(text, expected_tags):
-    """Parses a SOAP enveloped SAML thing and returns the thing as
-    a string.
+def _extract_body_header_from_soap(text):
+    """Parses a SOAP message and returns the
+    body and headers as a dictionary.
 
-    :param text: The SOAP object as XML string
-    :param expected_tags: What the tag of the SAML thingy is expected to be.
-    :return: SAML thingy as a string
+    :param text: The SOAP object as XML
+    :return: The body and headers as elementtree instances
     """
-    envelope = defusedxml.ElementTree.fromstring(text)
+    try:
+        envelope = defused_etree.fromstring(text)
+    except Exception as exc:
+        raise XmlParseError(f"{exc}")
 
     envelope_tag = "{%s}Envelope" % soapenv.NAMESPACE
     if envelope.tag != envelope_tag:
@@ -133,21 +139,40 @@ def parse_soap_enveloped_saml_thingy(text, expected_tags):
     if len(envelope) < 1:
         raise Exception("No items in envelope.")
 
-    body = None
+    env = {"header": [], "body": None}
+
     for part in envelope:
         if part.tag == "{%s}Body" % soapenv.NAMESPACE:
-            n_children = len(part)
-            if n_children != 1:
-                raise Exception(f"Expected a single child element, found {n_children}")
-            body = part
-            break
+            if len(part) < 1:
+                raise Exception("No items in envelope body.")
+            env["body"] = part
+        elif part.tag == "{%s}Header" % soapenv.NAMESPACE:
+            for item in part:
+                env["header"].append(item)
+
+    return env
+
+
+def parse_soap_enveloped_saml_thingy(text, expected_tags):
+    """Parses a SOAP enveloped SAML thing and returns the thing as
+    a string.
+
+    :param text: The SOAP object as XML string
+    :param expected_tags: What the tag of the SAML thingy is expected to be.
+    :return: SAML thingy as a string
+    """
+    env = _extract_body_header_from_soap(text)
+    body = env["body"]
+
+    if len(body) != 1:
+        raise Exception(f"Expected a single child element, found {n_children}")
 
     if body is None:
         return ""
 
     saml_part = body[0]
     if saml_part.tag in expected_tags:
-        return ElementTree.tostring(saml_part, encoding="UTF-8")
+        return defused_etree.tostring(saml_part, encoding="UTF-8")
     else:
         raise WrongMessageType(f"Was '{saml_part.tag}' expected one of {expected_tags}")
 
@@ -176,28 +201,11 @@ def class_instances_from_soap_enveloped_saml_thingies(text, modules):
     :param modules: modules representing xsd schemas
     :return: The body and headers as class instances
     """
-    try:
-        envelope = defusedxml.ElementTree.fromstring(text)
-    except Exception as exc:
-        raise XmlParseError(f"{exc}")
+    env = _extract_body_header_from_soap(text)
 
-    envelope_tag = "{%s}Envelope" % soapenv.NAMESPACE
-    if envelope.tag != envelope_tag:
-        raise ValueError(f"Invalid envelope tag '{envelope.tag}' should be '{envelope_tag}'")
-
-    if len(envelope) < 1:
-        raise Exception("No items in envelope.")
-
-    env = {"header": [], "body": None}
-
-    for part in envelope:
-        if part.tag == "{%s}Body" % soapenv.NAMESPACE:
-            if len(envelope) < 1:
-                raise Exception("No items in envelope part.")
-            env["body"] = instanciate_class(part[0], modules)
-        elif part.tag == "{%s}Header" % soapenv.NAMESPACE:
-            for item in part:
-                env["header"].append(instanciate_class(item, modules))
+    # broken envelope check was here
+    env["body"] = instanciate_class(env["body"][0], modules)
+    env["header"] = [instanciate_class(x, modules) for x in env["header"]]
 
     return env
 
@@ -208,31 +216,13 @@ def open_soap_envelope(text):
     :param text: SOAP message
     :return: dictionary with two keys "body"/"header"
     """
-    try:
-        envelope = defusedxml.ElementTree.fromstring(text)
-    except Exception as exc:
-        raise XmlParseError(f"{exc}")
+    env = _extract_body_header_from_soap(text)
 
-    envelope_tag = "{%s}Envelope" % soapenv.NAMESPACE
-    if envelope.tag != envelope_tag:
-        raise ValueError(f"Invalid envelope tag '{envelope.tag}' should be '{envelope_tag}'")
+    # broken envelope check was here
+    env["body"] = defused_etree.tostring(env["body"][0], encoding="UTF-8")
+    env["header"] = [defused_etree.tostring(x, encoding="UTF-8") for x in env["header"]]
 
-    if len(envelope) < 1:
-        raise Exception("No items in envelope.")
-
-    content = {"header": [], "body": None}
-
-    for part in envelope:
-        if part.tag == "{%s}Body" % soapenv.NAMESPACE:
-            if len(envelope) < 1:
-                raise Exception("No items in envelope part.")
-            content["body"] = ElementTree.tostring(part[0], encoding="UTF-8")
-        elif part.tag == "{%s}Header" % soapenv.NAMESPACE:
-            for item in part:
-                _str = ElementTree.tostring(item, encoding="UTF-8")
-                content["header"].append(_str)
-
-    return content
+    return env
 
 
 def make_soap_enveloped_saml_thingy(thingy, headers=None):
