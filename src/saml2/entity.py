@@ -349,7 +349,7 @@ class Entity(HTTPBase):
             except UnsupportedBinding:
                 pass
 
-        logger.error("Failed to find consumer URL: %s, %s, %s", entity_id, bindings, descr_type)
+        logger.warning("Failed to find consumer URL: %s, %s, %s", entity_id, bindings, descr_type)
         # logger.error("Bindings: %s", bindings)
         # logger.error("Entities: %s", self.metadata)
 
