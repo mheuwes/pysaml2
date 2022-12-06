@@ -1181,7 +1181,7 @@ class MetadataStore(MetaData):
                 known_entity = True
 
         if known_entity:
-            logger.error("Unsupported binding: %s (%s)", binding, entity_id)
+            logger.warning("Unsupported binding: %s (%s)", binding, entity_id)
             raise UnsupportedBinding(binding)
         else:
             logger.error("Unknown system entity: %s", entity_id)
